@@ -67,9 +67,11 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | Partial
  */
 export type LoadedConversation = { items: RenderItem[]; anchor: string | null }
 /**
- * A top-level item in the rendered transcript.
+ * A top-level item in the rendered transcript, paired with whether it is part
+ * of the normally-hidden noise (attachments, stop-hook summaries, queue ops,
+ * filler turns). The frontend hides these unless "Show hidden" is on.
  */
-export type RenderItem = 
+export type RenderItem = (
 /**
  * A genuine human prompt (string content, or array content containing text).
  */
@@ -87,7 +89,7 @@ export type RenderItem =
 /**
  * An unrecognized event type, preserved as raw JSON.
  */
-{ kind: "unknown"; uuid: string | null; label: string; raw: JsonValue } | { kind: "parseError"; uuid: string | null; lineNumber: number; raw: string }
+{ kind: "unknown"; uuid: string | null; label: string; raw: JsonValue } | { kind: "parseError"; uuid: string | null; lineNumber: number; raw: string }) & { hidden: boolean }
 /**
  * A tool call's result, joined from the `tool_result` block that appears in a
  * later user turn.

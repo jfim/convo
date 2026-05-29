@@ -42,10 +42,20 @@ pub enum AssistantBlock {
     Unknown { raw: Value },
 }
 
-/// A top-level item in the rendered transcript.
+/// A top-level item in the rendered transcript, paired with whether it is part
+/// of the normally-hidden noise (attachments, stop-hook summaries, queue ops,
+/// filler turns). The frontend hides these unless "Show hidden" is on.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct RenderItem {
+    #[serde(flatten)]
+    pub node: RenderNode,
+    pub hidden: bool,
+}
+
+/// The content of a top-level transcript item.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "camelCase")]
-pub enum RenderItem {
+pub enum RenderNode {
     /// A genuine human prompt (string content, or array content containing text).
     UserPrompt { uuid: Option<String>, text: String },
     /// A system-injected "user" turn (e.g. `<task-notification>`, slash-command
@@ -89,13 +99,29 @@ pub enum RenderItem {
     },
 }
 
+/// A render item that is shown in the default view.
+fn shown(node: RenderNode) -> RenderItem {
+    RenderItem {
+        node,
+        hidden: false,
+    }
+}
+
+/// A render item that is part of the normally-hidden noise, revealed only by the
+/// "Show hidden" toggle.
+fn hidden(node: RenderNode) -> RenderItem {
+    RenderItem { node, hidden: true }
+}
+
 /// Build the render model from raw events.
 ///
 /// - Joins each assistant `tool_use` with the matching `tool_result` from a
 ///   later user turn (by `tool_use_id`).
 /// - Drops user turns that carry only tool results (their content surfaces
 ///   inside the joined tool calls).
-/// - Hides `queue-operation` and `last-prompt` events.
+/// - Marks `queue-operation` / `last-prompt` events, attachments,
+///   `stop_hook_summary` system events, and "No response requested." filler
+///   turns as hidden (shown only when "Show hidden" is on).
 /// - Drops empty thinking blocks, empty assistant turns, and blank prompts.
 /// - Classifies tag-wrapped "user" turns (e.g. `<task-notification>`) as notices.
 /// - Merges contiguous assistant turns into one.
@@ -105,16 +131,20 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
     let mut items = Vec::new();
     for ev in events {
         if let Some(pe) = &ev.parse_error {
-            items.push(RenderItem::ParseError {
+            items.push(shown(RenderNode::ParseError {
                 uuid: ev.uuid.clone(),
                 line_number: pe.line_number,
                 raw: pe.raw.clone(),
-            });
+            }));
             continue;
         }
 
         match ev.event_type.as_str() {
-            "queue-operation" | "last-prompt" => continue,
+            "queue-operation" | "last-prompt" => items.push(hidden(RenderNode::Unknown {
+                uuid: ev.uuid.clone(),
+                label: format!("Event: {}", ev.event_type),
+                raw: serde_json::to_value(ev).unwrap_or(Value::Null),
+            })),
             "user" => {
                 // None => tool-result-only turn (consumed by joined tool calls).
                 let Some(text) = ev.message.as_ref().and_then(user_prompt_text) else {
@@ -128,13 +158,13 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
                 // notifications. Either way it's not a human-typed prompt.
                 if ev.is_meta == Some(true) || is_notice(&text) {
                     let summary = notice_summary(&text);
-                    items.push(RenderItem::Notice {
+                    items.push(shown(RenderNode::Notice {
                         uuid,
                         text,
                         summary,
-                    });
+                    }));
                 } else {
-                    items.push(RenderItem::UserPrompt { uuid, text });
+                    items.push(shown(RenderNode::UserPrompt { uuid, text }));
                 }
             }
             "assistant" => {
@@ -143,32 +173,47 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
                     .as_ref()
                     .map(|m| assistant_blocks(m, &results))
                     .unwrap_or_default();
-                if blocks.is_empty() || is_no_response(&blocks) {
-                    continue; // empty / "No response requested." filler — don't render
+                if blocks.is_empty() {
+                    continue; // nothing renderable — drop entirely
                 }
-                items.push(RenderItem::AssistantTurn {
+                let node = RenderNode::AssistantTurn {
                     uuid: ev.uuid.clone(),
-                    blocks,
-                });
+                    blocks: blocks.clone(),
+                };
+                // "No response requested." is filler: keep it, but hidden.
+                if is_no_response(&blocks) {
+                    items.push(hidden(node));
+                } else {
+                    items.push(shown(node));
+                }
             }
             // stop_hook_summary system events and attachments are noise: hidden.
-            "system" if ev.subtype.as_deref() == Some("stop_hook_summary") => continue,
-            "attachment" => continue,
-            "system" => items.push(RenderItem::System {
+            "system" if ev.subtype.as_deref() == Some("stop_hook_summary") => {
+                items.push(hidden(RenderNode::System {
+                    uuid: ev.uuid.clone(),
+                    subtype: ev.subtype.clone(),
+                    content: ev.content.clone(),
+                }))
+            }
+            "attachment" => items.push(hidden(RenderNode::Attachment {
+                uuid: ev.uuid.clone(),
+                content: ev.attachment.clone(),
+            })),
+            "system" => items.push(shown(RenderNode::System {
                 uuid: ev.uuid.clone(),
                 subtype: ev.subtype.clone(),
                 content: ev.content.clone(),
-            }),
-            "pr-link" => items.push(RenderItem::PrLink {
+            })),
+            "pr-link" => items.push(shown(RenderNode::PrLink {
                 uuid: ev.uuid.clone(),
                 url: ev.pr_url.clone(),
                 number: ev.pr_number,
-            }),
-            other => items.push(RenderItem::Unknown {
+            })),
+            other => items.push(shown(RenderNode::Unknown {
                 uuid: ev.uuid.clone(),
                 label: format!("Event: {other}"),
                 raw: serde_json::to_value(ev).unwrap_or(Value::Null),
-            }),
+            })),
         }
     }
     merge_adjacent_assistant_turns(items)
@@ -268,13 +313,22 @@ fn is_no_response(blocks: &[AssistantBlock]) -> bool {
 /// Merge directly-adjacent assistant turns into a single turn, concatenating
 /// their blocks. Adjacency arises because tool-result-only user turns between
 /// assistant events are dropped. The merged turn keeps the first turn's uuid.
+///
+/// Hidden items are transparent to merging: a visible assistant turn merges into
+/// the most recent *visible* assistant turn even if hidden items sit between
+/// them, so the default (hidden-off) view is unchanged. Hidden assistant turns
+/// (e.g. "No response requested." filler) never merge and never absorb others.
 fn merge_adjacent_assistant_turns(items: Vec<RenderItem>) -> Vec<RenderItem> {
     let mut out: Vec<RenderItem> = Vec::with_capacity(items.len());
     for item in items {
-        if let RenderItem::AssistantTurn { blocks, .. } = &item {
-            if let Some(RenderItem::AssistantTurn { blocks: prev, .. }) = out.last_mut() {
-                prev.extend(blocks.iter().cloned());
-                continue;
+        if !item.hidden {
+            if let RenderNode::AssistantTurn { blocks, .. } = &item.node {
+                if let Some(prev) = out.iter_mut().rev().find(|p| !p.hidden) {
+                    if let RenderNode::AssistantTurn { blocks: pb, .. } = &mut prev.node {
+                        pb.extend(blocks.iter().cloned());
+                        continue;
+                    }
+                }
             }
         }
         out.push(item);
@@ -386,14 +440,23 @@ mod tests {
         build(&parse_str(jsonl))
     }
 
+    /// The visible (default-view) nodes only.
+    fn visible_nodes(jsonl: &str) -> Vec<RenderNode> {
+        build_from(jsonl)
+            .into_iter()
+            .filter(|i| !i.hidden)
+            .map(|i| i.node)
+            .collect()
+    }
+
     #[test]
     fn user_string_prompt_becomes_user_prompt() {
-        let items = build_from(
+        let items = visible_nodes(
             r#"{"type":"user","uuid":"u1","message":{"role":"user","content":"hello"}}"#,
         );
         assert_eq!(items.len(), 1);
         match &items[0] {
-            RenderItem::UserPrompt { text, uuid } => {
+            RenderNode::UserPrompt { text, uuid } => {
                 assert_eq!(text, "hello");
                 assert_eq!(uuid.as_deref(), Some("u1"));
             }
@@ -414,11 +477,11 @@ mod tests {
 
     #[test]
     fn user_array_with_text_becomes_prompt() {
-        let items = build_from(
+        let items = visible_nodes(
             r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi there"}]}}"#,
         );
         assert_eq!(items.len(), 1);
-        assert!(matches!(&items[0], RenderItem::UserPrompt { text, .. } if text == "hi there"));
+        assert!(matches!(&items[0], RenderNode::UserPrompt { text, .. } if text == "hi there"));
     }
 
     #[test]
@@ -428,13 +491,13 @@ mod tests {
             "\n",
             r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file.txt","is_error":false}]}}"#,
         );
-        let items = build_from(jsonl);
+        let items = visible_nodes(jsonl);
         assert_eq!(
             items.len(),
             1,
             "the tool-result user turn should be dropped"
         );
-        let RenderItem::AssistantTurn { blocks, .. } = &items[0] else {
+        let RenderNode::AssistantTurn { blocks, .. } = &items[0] else {
             panic!("expected AssistantTurn");
         };
         // empty thinking dropped: thinking(real), markdown, toolcall = 3 blocks
@@ -454,10 +517,10 @@ mod tests {
 
     #[test]
     fn tool_call_without_result_has_none() {
-        let items = build_from(
+        let items = visible_nodes(
             r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t9","name":"Read","input":{"file_path":"/x"}}]}}"#,
         );
-        let RenderItem::AssistantTurn { blocks, .. } = &items[0] else {
+        let RenderNode::AssistantTurn { blocks, .. } = &items[0] else {
             panic!("expected AssistantTurn");
         };
         assert!(matches!(
@@ -476,18 +539,29 @@ mod tests {
             r#"{"type":"user","message":{"role":"user","content":"real"}}"#,
         );
         let items = build_from(jsonl);
-        assert_eq!(items.len(), 1);
-        assert!(matches!(&items[0], RenderItem::UserPrompt { .. }));
+        // All three are emitted; the two ops are hidden, the prompt is shown.
+        assert_eq!(items.len(), 3);
+        assert!(
+            items[0].hidden && matches!(items[0].node, RenderNode::Unknown { .. }),
+            "queue-operation should be a hidden Unknown"
+        );
+        assert!(
+            items[1].hidden && matches!(items[1].node, RenderNode::Unknown { .. }),
+            "last-prompt should be a hidden Unknown"
+        );
+        assert!(!items[2].hidden && matches!(items[2].node, RenderNode::UserPrompt { .. }));
+        // Default view shows only the prompt.
+        assert_eq!(items.iter().filter(|i| !i.hidden).count(), 1);
     }
 
     #[test]
     fn pr_link_is_rendered() {
-        let items = build_from(
+        let items = visible_nodes(
             r#"{"type":"pr-link","uuid":"p1","prUrl":"https://example.com/pr/1","prNumber":1}"#,
         );
         assert!(matches!(
             &items[0],
-            RenderItem::PrLink {
+            RenderNode::PrLink {
                 number: Some(1),
                 ..
             }
@@ -504,9 +578,9 @@ mod tests {
             "\n",
             r#"{"type":"assistant","uuid":"a2","message":{"role":"assistant","content":[{"type":"text","text":"second"}]}}"#,
         );
-        let items = build_from(jsonl);
+        let items = visible_nodes(jsonl);
         assert_eq!(items.len(), 1, "adjacent assistant turns should merge");
-        let RenderItem::AssistantTurn { blocks, uuid } = &items[0] else {
+        let RenderNode::AssistantTurn { blocks, uuid } = &items[0] else {
             panic!("expected AssistantTurn");
         };
         assert_eq!(uuid.as_deref(), Some("a1"), "keeps first turn's uuid");
@@ -524,7 +598,7 @@ mod tests {
             "\n",
             r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"b"}]}}"#,
         );
-        let items = build_from(jsonl);
+        let items = visible_nodes(jsonl);
         assert_eq!(items.len(), 3, "a real prompt between breaks contiguity");
     }
 
@@ -545,12 +619,12 @@ mod tests {
 
     #[test]
     fn task_notification_user_turn_becomes_notice() {
-        let items = build_from(
+        let items = visible_nodes(
             r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<status>killed</status>\n</task-notification>"}}"#,
         );
         assert_eq!(items.len(), 1);
         assert!(
-            matches!(&items[0], RenderItem::Notice { .. }),
+            matches!(&items[0], RenderNode::Notice { .. }),
             "tag-wrapped user turn should be a Notice, got {:?}",
             items[0]
         );
@@ -558,23 +632,23 @@ mod tests {
 
     #[test]
     fn plain_prompt_starting_with_angle_bracket_is_not_a_notice() {
-        let items = build_from(
+        let items = visible_nodes(
             r#"{"type":"user","message":{"role":"user","content":"<div> should I use this tag?"}}"#,
         );
         assert!(
-            matches!(&items[0], RenderItem::UserPrompt { .. }),
+            matches!(&items[0], RenderNode::UserPrompt { .. }),
             "unknown leading tag should stay a UserPrompt"
         );
     }
 
     #[test]
     fn is_meta_user_turn_becomes_notice_with_summary() {
-        let items = build_from(
+        let items = visible_nodes(
             r#"{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"Continue from where you left off."}]}}"#,
         );
         assert_eq!(items.len(), 1);
         match &items[0] {
-            RenderItem::Notice { summary, .. } => {
+            RenderNode::Notice { summary, .. } => {
                 assert_eq!(
                     summary.as_deref(),
                     Some("Continue from where you left off.")
@@ -586,10 +660,10 @@ mod tests {
 
     #[test]
     fn task_notification_summary_uses_summary_tag() {
-        let items = build_from(
+        let items = visible_nodes(
             r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<status>killed</status>\n<summary>Background command \"watcher\" was stopped</summary>\n</task-notification>"}}"#,
         );
-        let RenderItem::Notice { summary, .. } = &items[0] else {
+        let RenderNode::Notice { summary, .. } = &items[0] else {
             panic!("expected Notice");
         };
         assert_eq!(
@@ -599,11 +673,13 @@ mod tests {
     }
 
     #[test]
-    fn no_response_requested_assistant_turn_is_dropped() {
+    fn no_response_requested_assistant_turn_is_hidden() {
         let items = build_from(
             r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"No response requested."}]}}"#,
         );
-        assert!(items.is_empty(), "filler assistant turn should be dropped");
+        assert_eq!(items.len(), 1, "filler turn is emitted, just hidden");
+        assert!(items[0].hidden, "filler assistant turn should be hidden");
+        assert!(matches!(items[0].node, RenderNode::AssistantTurn { .. }));
     }
 
     #[test]
@@ -616,14 +692,50 @@ mod tests {
             r#"{"type":"system","subtype":"api_error","content":{"msg":"boom"}}"#,
         );
         let items = build_from(jsonl);
-        assert_eq!(
-            items.len(),
-            1,
-            "only the non-stop_hook system event remains"
+        assert_eq!(items.len(), 3, "all three are emitted");
+        assert!(
+            items[0].hidden && matches!(items[0].node, RenderNode::Attachment { .. }),
+            "attachment should be hidden"
         );
-        assert!(matches!(
-            &items[0],
-            RenderItem::System { subtype, .. } if subtype.as_deref() == Some("api_error")
-        ));
+        assert!(
+            items[1].hidden
+                && matches!(&items[1].node, RenderNode::System { subtype, .. } if subtype.as_deref() == Some("stop_hook_summary")),
+            "stop_hook_summary should be hidden"
+        );
+        assert!(
+            !items[2].hidden
+                && matches!(&items[2].node, RenderNode::System { subtype, .. } if subtype.as_deref() == Some("api_error")),
+            "non-stop_hook system event stays visible"
+        );
+        // Default view shows only the visible system event.
+        assert_eq!(items.iter().filter(|i| !i.hidden).count(), 1);
+    }
+
+    #[test]
+    fn hidden_items_are_transparent_to_assistant_merging() {
+        // A hidden attachment between two assistant turns must not break their
+        // merge, so the default view still shows one combined turn.
+        let jsonl = concat!(
+            r#"{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"text","text":"first"}]}}"#,
+            "\n",
+            r#"{"type":"attachment","attachment":{"hookName":"x"}}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"a2","message":{"role":"assistant","content":[{"type":"text","text":"second"}]}}"#,
+        );
+        let items = build_from(jsonl);
+        assert_eq!(
+            items.iter().filter(|i| !i.hidden).count(),
+            1,
+            "the two turns merge across the hidden attachment"
+        );
+        let merged = items.iter().find(|i| !i.hidden).unwrap();
+        let RenderNode::AssistantTurn { blocks, .. } = &merged.node else {
+            panic!("expected merged AssistantTurn");
+        };
+        assert_eq!(blocks.len(), 2, "first + second");
+        // The attachment is still present, hidden, for the toggle.
+        assert!(items
+            .iter()
+            .any(|i| i.hidden && matches!(i.node, RenderNode::Attachment { .. })));
     }
 }

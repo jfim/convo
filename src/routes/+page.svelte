@@ -9,6 +9,9 @@
   let items = $state<RenderItem[] | null>(null);
   let anchor = $state<string | null>(null);
   let errorMessage = $state<string | null>(null);
+  let showHidden = $state(false);
+
+  let hiddenCount = $derived(items?.filter((i) => i.hidden).length ?? 0);
 
   async function load(url: string) {
     errorMessage = null;
@@ -46,7 +49,13 @@
 </script>
 
 {#if items}
-  <Conversation {items} {anchor} />
+  <Conversation {items} {anchor} {showHidden} />
+  <footer class="bottombar">
+    <label class="show-hidden" class:disabled={hiddenCount === 0}>
+      <input type="checkbox" bind:checked={showHidden} disabled={hiddenCount === 0} />
+      Show hidden{hiddenCount > 0 ? ` (${hiddenCount})` : ""}
+    </label>
+  </footer>
 {:else if errorMessage}
   <ErrorScreen message={errorMessage} />
 {:else}
@@ -56,4 +65,27 @@
 <style>
   :global(body) { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #002b36; color: #eee8d5; }
   .loading { padding: 2rem; opacity: 0.6; }
+  .bottombar {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    display: flex;
+    justify-content: flex-end;
+    padding: 0.4rem 1rem;
+    background: #002b36;
+    border-top: 1px solid #073642;
+  }
+  .show-hidden {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    color: #93a1a1;
+    cursor: pointer;
+    user-select: none;
+  }
+  .show-hidden.disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
 </style>
