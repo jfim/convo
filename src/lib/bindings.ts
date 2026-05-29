@@ -36,43 +36,57 @@ async initialUrl() : Promise<string | null> {
 /** user-defined types **/
 
 /**
- * User `message.content` is either a plain prompt string or an array of blocks.
+ * One block within an assistant turn.
  */
-export type Content = string | ContentBlock[]
+export type AssistantBlock = 
 /**
- * A content block. Unknown block kinds are preserved as raw JSON so they can be
- * rendered as a visible "unrecognized" node instead of being dropped.
+ * Assistant prose, rendered as markdown.
  */
-export type ContentBlock = KnownBlock | JsonValue
+{ kind: "markdown"; text: string } | 
 /**
- * One line of a conversation `.jsonl`, decoded leniently.
- * 
- * Mirrors the Claude Code wire format directly (v1 is intentionally coupled to
- * it). Every non-guaranteed field is optional so unknown shapes never fail to
- * decode. `parse_error` is synthesized by the parser for lines that fail to
- * decode as JSON; it is never present in the source.
+ * Extended thinking. Only emitted when non-empty.
  */
-export type ConversationEvent = { type?: string; uuid?: string | null; parentUuid?: string | null; timestamp?: string | null; sessionId?: string | null; cwd?: string | null; gitBranch?: string | null; message?: Message | null; subtype?: string | null; level?: string | null; content?: JsonValue | null; attachment?: JsonValue | null; prUrl?: string | null; prRepository?: string | null; prNumber?: number | null; toolUseResult?: JsonValue | null; 
+{ kind: "thinking"; text: string } | 
 /**
- * Set by the parser when the raw line could not be decoded as JSON.
- * Never present in source `.jsonl`; synthesized by the parser only.
+ * A tool invocation with its result joined in (None if not yet available).
  */
-parseError?: ParseError | null }
+{ kind: "toolCall"; id: string; name: string; input: JsonValue; result: ToolResult | null } | 
+/**
+ * An unrecognized content block, preserved as raw JSON.
+ */
+{ kind: "unknown"; raw: JsonValue }
 /**
  * Error returned across the Tauri boundary. Serializes to a tagged object the
  * frontend can switch on.
  */
 export type ConvoError = { kind: "InvalidUrl"; message: string } | { kind: "PathTraversal"; message: string } | { kind: "NotFound"; message: string } | { kind: "Io"; message: string } | { kind: "NoHome" }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
-export type KnownBlock = { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "tool_use"; id: string; name: string; input: JsonValue } | { type: "tool_result"; tool_use_id: string; content: ToolResultContent; is_error?: boolean }
 /**
- * The payload returned to the frontend: the ordered events plus the optional
- * turn anchor parsed from the URL fragment.
+ * The payload returned to the frontend: the structured render model plus the
+ * optional turn anchor parsed from the URL fragment.
  */
-export type LoadedConversation = { events: ConversationEvent[]; anchor: string | null }
-export type Message = { role?: string | null; content: Content }
-export type ParseError = { line_number: number; raw: string; message: string }
-export type ToolResultContent = string | JsonValue[]
+export type LoadedConversation = { items: RenderItem[]; anchor: string | null }
+/**
+ * A top-level item in the rendered transcript.
+ */
+export type RenderItem = 
+/**
+ * A genuine human prompt (string content, or array content containing text).
+ */
+{ kind: "userPrompt"; uuid: string | null; text: string } | 
+/**
+ * An assistant turn with its inline blocks (text, thinking, tool calls).
+ */
+{ kind: "assistantTurn"; uuid: string | null; blocks: AssistantBlock[] } | { kind: "system"; uuid: string | null; subtype: string | null; content: JsonValue | null } | { kind: "attachment"; uuid: string | null; content: JsonValue | null } | { kind: "prLink"; uuid: string | null; url: string | null; number: number | null } | 
+/**
+ * An unrecognized event type, preserved as raw JSON.
+ */
+{ kind: "unknown"; uuid: string | null; label: string; raw: JsonValue } | { kind: "parseError"; uuid: string | null; lineNumber: number; raw: string }
+/**
+ * A tool call's result, joined from the `tool_result` block that appears in a
+ * later user turn.
+ */
+export type ToolResult = { content: JsonValue; isError: boolean }
 
 /** tauri-specta globals **/
 

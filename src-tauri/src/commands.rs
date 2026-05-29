@@ -2,14 +2,14 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::error::ConvoError;
-use crate::model::ConversationEvent;
-use crate::{parser, resolver};
+use crate::view::RenderItem;
+use crate::{parser, resolver, view};
 
-/// The payload returned to the frontend: the ordered events plus the optional
-/// turn anchor parsed from the URL fragment.
+/// The payload returned to the frontend: the structured render model plus the
+/// optional turn anchor parsed from the URL fragment.
 #[derive(Debug, Serialize, Type)]
 pub struct LoadedConversation {
-    pub events: Vec<ConversationEvent>,
+    pub items: Vec<RenderItem>,
     pub anchor: Option<String>,
 }
 
@@ -22,7 +22,7 @@ pub fn load_conversation(url: String) -> Result<LoadedConversation, ConvoError> 
     let target = resolver::resolve(&url, &projects_root)?;
     let events = parser::parse(&target.path)?;
     Ok(LoadedConversation {
-        events,
+        items: view::build(&events),
         anchor: target.anchor,
     })
 }

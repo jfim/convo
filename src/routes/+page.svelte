@@ -2,11 +2,11 @@
   import { onMount } from "svelte";
   import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
   import { listen } from "@tauri-apps/api/event";
-  import { commands, type ConversationEvent, type ConvoError } from "$lib/bindings";
+  import { commands, type RenderItem, type ConvoError } from "$lib/bindings";
   import Conversation from "$lib/Conversation.svelte";
   import ErrorScreen from "$lib/ErrorScreen.svelte";
 
-  let events = $state<ConversationEvent[] | null>(null);
+  let items = $state<RenderItem[] | null>(null);
   let anchor = $state<string | null>(null);
   let errorMessage = $state<string | null>(null);
 
@@ -14,11 +14,11 @@
     errorMessage = null;
     const result = await commands.loadConversation(url);
     if (result.status === "ok") {
-      events = result.data.events;
+      items = result.data.items;
       anchor = result.data.anchor;
     } else {
       errorMessage = formatError(result.error);
-      events = null;
+      items = null;
     }
   }
 
@@ -45,8 +45,8 @@
   });
 </script>
 
-{#if events}
-  <Conversation {events} {anchor} />
+{#if items}
+  <Conversation {items} {anchor} />
 {:else if errorMessage}
   <ErrorScreen message={errorMessage} />
 {:else}

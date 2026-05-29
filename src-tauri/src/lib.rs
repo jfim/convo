@@ -3,6 +3,7 @@ pub mod error;
 pub mod model;
 pub mod parser;
 pub mod resolver;
+pub mod view;
 
 use tauri_specta::{collect_commands, Builder};
 

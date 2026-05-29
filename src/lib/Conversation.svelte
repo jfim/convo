@@ -1,12 +1,14 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import type { ConversationEvent } from "$lib/bindings";
-  import EventNode from "$lib/events/EventNode.svelte";
+  import type { RenderItem } from "$lib/bindings";
+  import RenderItemView from "$lib/render/RenderItemView.svelte";
 
-  let { events, anchor = null }: { events: ConversationEvent[]; anchor?: string | null } = $props();
+  let { items, anchor = null }: { items: RenderItem[]; anchor?: string | null } =
+    $props();
 
-  function keyOf(e: ConversationEvent, i: number): string {
-    return e.uuid ?? `idx-${i}`;
+  // Keyed by uuid so a future live-tail can append without re-rendering.
+  function keyOf(item: RenderItem, i: number): string {
+    return item.uuid ?? `idx-${i}`;
   }
 
   $effect(() => {
@@ -25,14 +27,21 @@
 </script>
 
 <div class="conversation">
-  {#each events as event, i (keyOf(event, i))}
-    <div id={`event-${keyOf(event, i)}`} class="event-wrap">
-      <EventNode {event} />
+  {#each items as item, i (keyOf(item, i))}
+    <div id={`event-${keyOf(item, i)}`} class="event-wrap">
+      <RenderItemView {item} />
     </div>
   {/each}
 </div>
 
 <style>
-  .conversation { max-width: 56rem; margin: 0 auto; padding: 1rem; }
-  :global(.event-wrap.highlight) { outline: 2px solid #b58900; border-radius: 6px; }
+  .conversation {
+    max-width: 56rem;
+    margin: 0 auto;
+    padding: 1rem;
+  }
+  :global(.event-wrap.highlight) {
+    outline: 2px solid #b58900;
+    border-radius: 6px;
+  }
 </style>
