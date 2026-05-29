@@ -27,12 +27,17 @@
   }
 
   onMount(async () => {
-    const start = await getCurrent();
-    if (start && start.length > 0) {
-      await load(start[0]);
+    // Cold-start URL. Prefer our own argv scan (robust against the extra CLI
+    // flags cargo/tauri dev append, which defeat the plugin's getCurrent), and
+    // fall back to the plugin for platforms that don't deliver it via argv.
+    const coldStart = (await commands.initialUrl()) ?? (await getCurrent())?.[0] ?? null;
+    if (coldStart) {
+      await load(coldStart);
     } else {
       errorMessage = "No conversation URL provided.";
     }
+    // Warm-start: the OS spawns a second instance; single-instance forwards the
+    // URL as a "deep-link" event. onOpenUrl covers macOS.
     await onOpenUrl((urls) => {
       if (urls.length > 0) void load(urls[0]);
     });

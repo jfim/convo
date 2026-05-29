@@ -15,6 +15,13 @@ async loadConversation(url: string) : Promise<Result<LoadedConversation, ConvoEr
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * The deep-link URL the app was cold-started with, if any. Read by the frontend
+ * on load instead of the plugin's stricter `getCurrent()`.
+ */
+async initialUrl() : Promise<string | null> {
+    return await TAURI_INVOKE("initial_url");
 }
 }
 
