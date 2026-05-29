@@ -32,6 +32,9 @@ handoff. A ready-to-host, hardened redirect (nginx and Caddy) lives in
 instance. Set `CONVO_REDIRECT_HOST` and the `link` skill emits the clickable
 `https://` form automatically.
 
+Alternatively, if you trust random people on the internet, set
+`CONVO_REDIRECT_HOST` to `convo.jean-francois.im`.
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
