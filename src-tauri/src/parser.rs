@@ -24,32 +24,34 @@ pub fn parse_str(contents: &str) -> Vec<ConversationEvent> {
         .lines()
         .enumerate()
         .filter(|(_, line)| !line.trim().is_empty())
-        .map(|(idx, line)| match serde_json::from_str::<ConversationEvent>(line) {
-            Ok(ev) => ev,
-            Err(e) => ConversationEvent {
-                event_type: "parse-error".to_string(),
-                uuid: Some(format!("parse-error-{}", idx + 1)),
-                parse_error: Some(ParseError {
-                    line_number: (idx + 1) as u32,
-                    raw: line.to_string(),
-                    message: e.to_string(),
-                }),
-                parent_uuid: None,
-                timestamp: None,
-                session_id: None,
-                cwd: None,
-                git_branch: None,
-                message: None,
-                subtype: None,
-                level: None,
-                content: None,
-                attachment: None,
-                pr_url: None,
-                pr_repository: None,
-                pr_number: None,
-                tool_use_result: None,
+        .map(
+            |(idx, line)| match serde_json::from_str::<ConversationEvent>(line) {
+                Ok(ev) => ev,
+                Err(e) => ConversationEvent {
+                    event_type: "parse-error".to_string(),
+                    uuid: Some(format!("parse-error-{}", idx + 1)),
+                    parse_error: Some(ParseError {
+                        line_number: (idx + 1) as u32,
+                        raw: line.to_string(),
+                        message: e.to_string(),
+                    }),
+                    parent_uuid: None,
+                    timestamp: None,
+                    session_id: None,
+                    cwd: None,
+                    git_branch: None,
+                    message: None,
+                    subtype: None,
+                    level: None,
+                    content: None,
+                    attachment: None,
+                    pr_url: None,
+                    pr_repository: None,
+                    pr_number: None,
+                    tool_use_result: None,
+                },
             },
-        })
+        )
         .collect()
 }
 

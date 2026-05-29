@@ -20,12 +20,13 @@ pub fn run() {
 
     #[cfg(desktop)]
     {
-        tauri_builder = tauri_builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            use tauri::Emitter;
-            if let Some(url) = args.iter().find(|a| a.starts_with("convo://")) {
-                let _ = app.emit("deep-link", url.clone());
-            }
-        }));
+        tauri_builder =
+            tauri_builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+                use tauri::Emitter;
+                if let Some(url) = args.iter().find(|a| a.starts_with("convo://")) {
+                    let _ = app.emit("deep-link", url.clone());
+                }
+            }));
     }
 
     tauri_builder

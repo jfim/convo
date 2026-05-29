@@ -133,8 +133,14 @@ mod tests {
             _ => panic!("expected blocks"),
         };
         assert_eq!(blocks.len(), 3);
-        assert!(matches!(&blocks[0], ContentBlock::Known(KnownBlock::Thinking { .. })));
-        assert!(matches!(&blocks[2], ContentBlock::Known(KnownBlock::ToolUse { .. })));
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::Known(KnownBlock::Thinking { .. })
+        ));
+        assert!(matches!(
+            &blocks[2],
+            ContentBlock::Known(KnownBlock::ToolUse { .. })
+        ));
     }
 
     #[test]
