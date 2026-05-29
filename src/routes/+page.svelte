@@ -18,6 +18,48 @@
   let showHidden = $state(false);
 
   let hiddenCount = $derived(items?.filter((i) => i.hidden).length ?? 0);
+  let exporting = $state(false);
+
+  // Build a self-contained HTML document from the rendered transcript: the
+  // `.conversation` subtree plus every stylesheet's rules inlined, so the file
+  // renders identically with no external assets. Reflects the current
+  // "Show hidden" state (only visible items are in the DOM).
+  async function exportHtml() {
+    const conv = document.querySelector(".conversation");
+    if (!conv) return;
+    const css = Array.from(document.styleSheets)
+      .map((sheet) => {
+        try {
+          return Array.from(sheet.cssRules)
+            .map((r) => r.cssText)
+            .join("\n");
+        } catch {
+          return ""; // cross-origin sheet — skip
+        }
+      })
+      .join("\n");
+    const doc = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>convo export</title>
+<style>
+${css}
+</style>
+</head>
+<body>
+${conv.outerHTML}
+</body>
+</html>`;
+    exporting = true;
+    try {
+      const result = await commands.exportHtml("conversation.html", doc);
+      if (result.status === "error") errorMessage = formatError(result.error);
+    } finally {
+      exporting = false;
+    }
+  }
 
   async function load(url: string) {
     errorMessage = null;
@@ -59,6 +101,9 @@
 {#if items}
   <Conversation {items} {anchor} {showHidden} {stats} />
   <footer class="bottombar">
+    <button class="export" onclick={exportHtml} disabled={exporting}>
+      {exporting ? "Exporting…" : "Export HTML"}
+    </button>
     <label class="show-hidden" class:disabled={hiddenCount === 0}>
       <input type="checkbox" bind:checked={showHidden} disabled={hiddenCount === 0} />
       Show hidden{hiddenCount > 0 ? ` (${hiddenCount})` : ""}
@@ -79,9 +124,28 @@
     z-index: 10;
     display: flex;
     justify-content: flex-end;
+    align-items: center;
+    gap: 1rem;
     padding: 0.4rem 1rem;
     background: #002b36;
     border-top: 1px solid #073642;
+  }
+  .export {
+    font-size: 0.8rem;
+    color: #93a1a1;
+    background: #073642;
+    border: 1px solid #586e75;
+    border-radius: 4px;
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
+  }
+  .export:hover:not(:disabled) {
+    background: #0a4554;
+    color: #eee8d5;
+  }
+  .export:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   .show-hidden {
     display: flex;

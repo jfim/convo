@@ -12,7 +12,8 @@ use tauri_specta::{collect_commands, Builder};
 fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::load_conversation,
-        commands::initial_url
+        commands::initial_url,
+        commands::export_html
     ])
 }
 
@@ -36,6 +37,7 @@ pub fn run() {
     tauri_builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);

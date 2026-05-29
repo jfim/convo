@@ -22,6 +22,21 @@ async loadConversation(url: string) : Promise<Result<LoadedConversation, ConvoEr
  */
 async initialUrl() : Promise<string | null> {
     return await TAURI_INVOKE("initial_url");
+},
+/**
+ * Prompt for a destination with a native save dialog and write `html` there.
+ * 
+ * The frontend builds a self-contained HTML document (rendered transcript +
+ * inlined styles); this just handles the picker and the file write. Returns the
+ * saved path, or `None` if the user cancelled.
+ */
+async exportHtml(defaultName: string, html: string) : Promise<Result<string | null, ConvoError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_html", { defaultName, html }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

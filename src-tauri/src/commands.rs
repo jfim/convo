@@ -30,6 +30,42 @@ pub fn load_conversation(url: String) -> Result<LoadedConversation, ConvoError> 
     })
 }
 
+/// Prompt for a destination with a native save dialog and write `html` there.
+///
+/// The frontend builds a self-contained HTML document (rendered transcript +
+/// inlined styles); this just handles the picker and the file write. Returns the
+/// saved path, or `None` if the user cancelled.
+#[tauri::command]
+#[specta::specta]
+pub async fn export_html(
+    app: tauri::AppHandle,
+    default_name: String,
+    html: String,
+) -> Result<Option<String>, ConvoError> {
+    use tauri_plugin_dialog::DialogExt;
+
+    // `blocking_save_file` parks the calling thread until the (main-thread) GTK
+    // dialog resolves, so it must run off the main thread — hence spawn_blocking.
+    let file = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_file_name(&default_name)
+            .add_filter("HTML", &["html"])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| ConvoError::Io(e.to_string()))?;
+
+    let Some(file) = file else {
+        return Ok(None); // user cancelled
+    };
+    let path = file
+        .into_path()
+        .map_err(|e| ConvoError::Io(e.to_string()))?;
+    std::fs::write(&path, html).map_err(|e| ConvoError::Io(e.to_string()))?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
 /// Find the first `convo://` deep-link URL among the given arguments.
 ///
 /// On Linux/Windows a cold-start deep link arrives as a CLI argument. The
