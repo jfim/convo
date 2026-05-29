@@ -48,6 +48,9 @@ pub enum AssistantBlock {
 pub enum RenderItem {
     /// A genuine human prompt (string content, or array content containing text).
     UserPrompt { uuid: Option<String>, text: String },
+    /// A system-injected "user" turn (e.g. `<task-notification>`, slash-command
+    /// invocations) — not something the human typed. Rendered distinctly.
+    Notice { uuid: Option<String>, text: String },
     /// An assistant turn with its inline blocks (text, thinking, tool calls).
     AssistantTurn {
         uuid: Option<String>,
@@ -88,7 +91,9 @@ pub enum RenderItem {
 /// - Drops user turns that carry only tool results (their content surfaces
 ///   inside the joined tool calls).
 /// - Hides `queue-operation` and `last-prompt` events.
-/// - Drops empty thinking blocks.
+/// - Drops empty thinking blocks, empty assistant turns, and blank prompts.
+/// - Classifies tag-wrapped "user" turns (e.g. `<task-notification>`) as notices.
+/// - Merges contiguous assistant turns into one.
 pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
     let results = collect_tool_results(events);
 
@@ -106,13 +111,19 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
         match ev.event_type.as_str() {
             "queue-operation" | "last-prompt" => continue,
             "user" => {
-                if let Some(text) = ev.message.as_ref().and_then(user_prompt_text) {
-                    items.push(RenderItem::UserPrompt {
-                        uuid: ev.uuid.clone(),
-                        text,
-                    });
+                // None => tool-result-only turn (consumed by joined tool calls).
+                let Some(text) = ev.message.as_ref().and_then(user_prompt_text) else {
+                    continue;
+                };
+                if text.trim().is_empty() {
+                    continue; // empty prompt — don't render
                 }
-                // else: tool-result-only turn — consumed by joined tool calls.
+                let uuid = ev.uuid.clone();
+                if is_notice(&text) {
+                    items.push(RenderItem::Notice { uuid, text });
+                } else {
+                    items.push(RenderItem::UserPrompt { uuid, text });
+                }
             }
             "assistant" => {
                 let blocks = ev
@@ -120,6 +131,9 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
                     .as_ref()
                     .map(|m| assistant_blocks(m, &results))
                     .unwrap_or_default();
+                if blocks.is_empty() {
+                    continue; // empty assistant turn — don't render
+                }
                 items.push(RenderItem::AssistantTurn {
                     uuid: ev.uuid.clone(),
                     blocks,
@@ -146,7 +160,55 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
             }),
         }
     }
-    items
+    merge_adjacent_assistant_turns(items)
+}
+
+/// Tags that mark a "user" turn as a system-injected notice rather than a
+/// human-authored prompt.
+const NOTICE_TAGS: &[&str] = &[
+    "task-notification",
+    "command-name",
+    "command-message",
+    "command-args",
+    "local-command-stdout",
+    "local-command-stderr",
+    "bash-stdout",
+    "bash-stderr",
+    "system-reminder",
+    "system",
+    "user-prompt-submit-hook",
+];
+
+/// The name of the leading XML-ish tag in `text`, if it opens with one.
+fn leading_tag(text: &str) -> Option<&str> {
+    let rest = text.trim_start().strip_prefix('<')?;
+    if rest.starts_with('/') || rest.starts_with('!') {
+        return None;
+    }
+    let end = rest.find(['>', ' ', '\n', '\t', '/'])?;
+    Some(&rest[..end])
+}
+
+/// Whether a user turn's text is a system-injected notice.
+fn is_notice(text: &str) -> bool {
+    leading_tag(text).is_some_and(|tag| NOTICE_TAGS.contains(&tag))
+}
+
+/// Merge directly-adjacent assistant turns into a single turn, concatenating
+/// their blocks. Adjacency arises because tool-result-only user turns between
+/// assistant events are dropped. The merged turn keeps the first turn's uuid.
+fn merge_adjacent_assistant_turns(items: Vec<RenderItem>) -> Vec<RenderItem> {
+    let mut out: Vec<RenderItem> = Vec::with_capacity(items.len());
+    for item in items {
+        if let RenderItem::AssistantTurn { blocks, .. } = &item {
+            if let Some(RenderItem::AssistantTurn { blocks: prev, .. }) = out.last_mut() {
+                prev.extend(blocks.iter().cloned());
+                continue;
+            }
+        }
+        out.push(item);
+    }
+    out
 }
 
 /// Scan all user turns for `tool_result` blocks, keyed by the tool-use id.
@@ -359,5 +421,78 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn contiguous_assistant_turns_merge_into_one() {
+        // Two assistant events separated only by a (dropped) tool-result turn.
+        let jsonl = concat!(
+            r#"{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"text","text":"first"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"a2","message":{"role":"assistant","content":[{"type":"text","text":"second"}]}}"#,
+        );
+        let items = build_from(jsonl);
+        assert_eq!(items.len(), 1, "adjacent assistant turns should merge");
+        let RenderItem::AssistantTurn { blocks, uuid } = &items[0] else {
+            panic!("expected AssistantTurn");
+        };
+        assert_eq!(uuid.as_deref(), Some("a1"), "keeps first turn's uuid");
+        assert_eq!(blocks.len(), 3, "text + toolcall + text");
+        assert!(matches!(&blocks[0], AssistantBlock::Markdown { text } if text == "first"));
+        assert!(matches!(&blocks[2], AssistantBlock::Markdown { text } if text == "second"));
+    }
+
+    #[test]
+    fn assistant_turns_around_a_real_prompt_do_not_merge() {
+        let jsonl = concat!(
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"a"}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":"hi"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"b"}]}}"#,
+        );
+        let items = build_from(jsonl);
+        assert_eq!(items.len(), 3, "a real prompt between breaks contiguity");
+    }
+
+    #[test]
+    fn empty_assistant_turn_is_dropped() {
+        // Only an empty thinking block => no renderable blocks => dropped.
+        let items = build_from(
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"   "}]}}"#,
+        );
+        assert!(items.is_empty(), "empty assistant turn should be dropped");
+    }
+
+    #[test]
+    fn blank_user_prompt_is_dropped() {
+        let items = build_from(r#"{"type":"user","message":{"role":"user","content":"   "}}"#);
+        assert!(items.is_empty(), "blank prompt should be dropped");
+    }
+
+    #[test]
+    fn task_notification_user_turn_becomes_notice() {
+        let items = build_from(
+            r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<status>killed</status>\n</task-notification>"}}"#,
+        );
+        assert_eq!(items.len(), 1);
+        assert!(
+            matches!(&items[0], RenderItem::Notice { .. }),
+            "tag-wrapped user turn should be a Notice, got {:?}",
+            items[0]
+        );
+    }
+
+    #[test]
+    fn plain_prompt_starting_with_angle_bracket_is_not_a_notice() {
+        let items = build_from(
+            r#"{"type":"user","message":{"role":"user","content":"<div> should I use this tag?"}}"#,
+        );
+        assert!(
+            matches!(&items[0], RenderItem::UserPrompt { .. }),
+            "unknown leading tag should stay a UserPrompt"
+        );
     }
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { RenderItem } from "$lib/bindings";
   import UserPrompt from "./UserPrompt.svelte";
+  import Notice from "./Notice.svelte";
   import AssistantTurn from "./AssistantTurn.svelte";
   import SystemEvent from "$lib/events/SystemEvent.svelte";
   import AttachmentEvent from "$lib/events/AttachmentEvent.svelte";
@@ -12,6 +13,8 @@
 
 {#if item.kind === "userPrompt"}
   <UserPrompt text={item.text} />
+{:else if item.kind === "notice"}
+  <Notice text={item.text} />
 {:else if item.kind === "assistantTurn"}
   <AssistantTurn blocks={item.blocks} />
 {:else if item.kind === "system"}
