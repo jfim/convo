@@ -22,7 +22,7 @@
   {#if open}
     {@const Body = renderer.component}
     <div class="body">
-      <Body {input} {result} />
+      <Body {input} {result} {summary} />
     </div>
   {/if}
 </div>
