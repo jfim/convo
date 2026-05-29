@@ -56,16 +56,42 @@ export type AssistantBlock =
  */
 { kind: "unknown"; raw: JsonValue }
 /**
+ * Computed statistics for a whole conversation, shown in the collapsed
+ * "Conversation details" item at the end of the transcript.
+ */
+export type ConversationStats = { 
+/**
+ * User + assistant message events (the "turns" headline count).
+ */
+turns: number; userTurns: number; assistantTurns: number; 
+/**
+ * Tool invocations grouped by tool name, descending by count.
+ */
+toolCalls: NamedCount[]; totalToolCalls: number; failedToolCalls: number; tokens: TokenTotals; 
+/**
+ * cache_read / (cache_read + cache_creation + input), or None if no input.
+ */
+cacheHitRate: number | null; 
+/**
+ * Distinct models seen (excluding the `<synthetic>` placeholder).
+ */
+models: string[]; cwd: string | null; gitBranch: string | null; version: string | null }
+/**
  * Error returned across the Tauri boundary. Serializes to a tagged object the
  * frontend can switch on.
  */
 export type ConvoError = { kind: "InvalidUrl"; message: string } | { kind: "PathTraversal"; message: string } | { kind: "NotFound"; message: string } | { kind: "Io"; message: string } | { kind: "NoHome" }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 /**
- * The payload returned to the frontend: the structured render model plus the
- * optional turn anchor parsed from the URL fragment.
+ * The payload returned to the frontend: the structured render model, the
+ * optional turn anchor parsed from the URL fragment, and aggregate stats for
+ * the conversation-details summary.
  */
-export type LoadedConversation = { items: RenderItem[]; anchor: string | null }
+export type LoadedConversation = { items: RenderItem[]; anchor: string | null; stats: ConversationStats }
+/**
+ * A `(name, count)` pair, e.g. how many times a given tool was called.
+ */
+export type NamedCount = { name: string; count: number }
 /**
  * A top-level item in the rendered transcript, paired with whether it is part
  * of the normally-hidden noise (attachments, stop-hook summaries, queue ops,
@@ -90,6 +116,10 @@ export type RenderItem = (
  * An unrecognized event type, preserved as raw JSON.
  */
 { kind: "unknown"; uuid: string | null; label: string; raw: JsonValue } | { kind: "parseError"; uuid: string | null; lineNumber: number; raw: string }) & { hidden: boolean }
+/**
+ * Aggregate token usage across all assistant turns.
+ */
+export type TokenTotals = { input: number; output: number; cacheCreation: number; cacheRead: number }
 /**
  * A tool call's result, joined from the `tool_result` block that appears in a
  * later user turn.

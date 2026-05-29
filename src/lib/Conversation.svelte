@@ -1,16 +1,19 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import type { RenderItem } from "$lib/bindings";
+  import type { RenderItem, ConversationStats } from "$lib/bindings";
   import RenderItemView from "$lib/render/RenderItemView.svelte";
+  import ConversationDetails from "$lib/render/ConversationDetails.svelte";
 
   let {
     items,
     anchor = null,
     showHidden = false,
+    stats = null,
   }: {
     items: RenderItem[];
     anchor?: string | null;
     showHidden?: boolean;
+    stats?: ConversationStats | null;
   } = $props();
 
   // Hidden items (attachments, stop-hook summaries, queue ops, filler turns)
@@ -47,6 +50,9 @@
       <RenderItemView {item} />
     </div>
   {/each}
+  {#if stats && stats.turns > 0}
+    <ConversationDetails {stats} />
+  {/if}
 </div>
 
 <style>

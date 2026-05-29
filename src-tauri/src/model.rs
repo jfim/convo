@@ -25,6 +25,8 @@ pub struct ConversationEvent {
     #[serde(default)]
     pub git_branch: Option<String>,
     #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
     pub message: Option<Message>,
     #[serde(default)]
     pub subtype: Option<String>,
@@ -64,6 +66,26 @@ pub struct Message {
     #[serde(default)]
     pub role: Option<String>,
     pub content: Content,
+    /// The model that produced an assistant turn (e.g. `claude-opus-4-7`).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Token accounting for an assistant turn.
+    #[serde(default)]
+    pub usage: Option<Usage>,
+}
+
+/// Per-assistant-turn token usage. All fields optional/lenient so partial or
+/// future shapes still decode.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Type)]
+pub struct Usage {
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_read_input_tokens: Option<u64>,
 }
 
 /// User `message.content` is either a plain prompt string or an array of blocks.

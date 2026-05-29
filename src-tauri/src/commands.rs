@@ -2,15 +2,17 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::error::ConvoError;
-use crate::view::RenderItem;
+use crate::view::{ConversationStats, RenderItem};
 use crate::{parser, resolver, view};
 
-/// The payload returned to the frontend: the structured render model plus the
-/// optional turn anchor parsed from the URL fragment.
+/// The payload returned to the frontend: the structured render model, the
+/// optional turn anchor parsed from the URL fragment, and aggregate stats for
+/// the conversation-details summary.
 #[derive(Debug, Serialize, Type)]
 pub struct LoadedConversation {
     pub items: Vec<RenderItem>,
     pub anchor: Option<String>,
+    pub stats: ConversationStats,
 }
 
 /// Resolve a `convo://` URL and load the referenced conversation.
@@ -23,6 +25,7 @@ pub fn load_conversation(url: String) -> Result<LoadedConversation, ConvoError> 
     let events = parser::parse(&target.path)?;
     Ok(LoadedConversation {
         items: view::build(&events),
+        stats: view::compute_stats(&events),
         anchor: target.anchor,
     })
 }

@@ -2,11 +2,17 @@
   import { onMount } from "svelte";
   import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
   import { listen } from "@tauri-apps/api/event";
-  import { commands, type RenderItem, type ConvoError } from "$lib/bindings";
+  import {
+    commands,
+    type RenderItem,
+    type ConversationStats,
+    type ConvoError,
+  } from "$lib/bindings";
   import Conversation from "$lib/Conversation.svelte";
   import ErrorScreen from "$lib/ErrorScreen.svelte";
 
   let items = $state<RenderItem[] | null>(null);
+  let stats = $state<ConversationStats | null>(null);
   let anchor = $state<string | null>(null);
   let errorMessage = $state<string | null>(null);
   let showHidden = $state(false);
@@ -18,10 +24,12 @@
     const result = await commands.loadConversation(url);
     if (result.status === "ok") {
       items = result.data.items;
+      stats = result.data.stats;
       anchor = result.data.anchor;
     } else {
       errorMessage = formatError(result.error);
       items = null;
+      stats = null;
     }
   }
 
@@ -49,7 +57,7 @@
 </script>
 
 {#if items}
-  <Conversation {items} {anchor} {showHidden} />
+  <Conversation {items} {anchor} {showHidden} {stats} />
   <footer class="bottombar">
     <label class="show-hidden" class:disabled={hiddenCount === 0}>
       <input type="checkbox" bind:checked={showHidden} disabled={hiddenCount === 0} />

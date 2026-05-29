@@ -61,7 +61,9 @@ mod export_bindings {
     fn export_typescript_bindings() {
         specta_builder()
             .export(
-                specta_typescript::Typescript::default(),
+                specta_typescript::Typescript::default()
+                    // Token counts are u64; render them as plain TS `number`.
+                    .bigint(specta_typescript::BigIntExportBehavior::Number),
                 "../src/lib/bindings.ts",
             )
             .expect("failed to export typescript bindings");

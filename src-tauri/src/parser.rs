@@ -40,6 +40,7 @@ pub fn parse_str(contents: &str) -> Vec<ConversationEvent> {
                     session_id: None,
                     cwd: None,
                     git_branch: None,
+                    version: None,
                     message: None,
                     subtype: None,
                     level: None,

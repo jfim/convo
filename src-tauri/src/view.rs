@@ -14,6 +14,53 @@ use crate::model::{
     Content, ContentBlock, ConversationEvent, KnownBlock, Message, ToolResultContent,
 };
 
+/// A `(name, count)` pair, e.g. how many times a given tool was called.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct NamedCount {
+    pub name: String,
+    pub count: u64,
+}
+
+/// Aggregate token usage across all assistant turns.
+#[derive(Debug, Clone, Default, Serialize, Type)]
+pub struct TokenTotals {
+    pub input: u64,
+    pub output: u64,
+    #[serde(rename = "cacheCreation")]
+    pub cache_creation: u64,
+    #[serde(rename = "cacheRead")]
+    pub cache_read: u64,
+}
+
+/// Computed statistics for a whole conversation, shown in the collapsed
+/// "Conversation details" item at the end of the transcript.
+#[derive(Debug, Clone, Default, Serialize, Type)]
+pub struct ConversationStats {
+    /// User + assistant message events (the "turns" headline count).
+    pub turns: u64,
+    #[serde(rename = "userTurns")]
+    pub user_turns: u64,
+    #[serde(rename = "assistantTurns")]
+    pub assistant_turns: u64,
+    /// Tool invocations grouped by tool name, descending by count.
+    #[serde(rename = "toolCalls")]
+    pub tool_calls: Vec<NamedCount>,
+    #[serde(rename = "totalToolCalls")]
+    pub total_tool_calls: u64,
+    #[serde(rename = "failedToolCalls")]
+    pub failed_tool_calls: u64,
+    pub tokens: TokenTotals,
+    /// cache_read / (cache_read + cache_creation + input), or None if no input.
+    #[serde(rename = "cacheHitRate")]
+    pub cache_hit_rate: Option<f64>,
+    /// Distinct models seen (excluding the `<synthetic>` placeholder).
+    pub models: Vec<String>,
+    pub cwd: Option<String>,
+    #[serde(rename = "gitBranch")]
+    pub git_branch: Option<String>,
+    pub version: Option<String>,
+}
+
 /// A tool call's result, joined from the `tool_result` block that appears in a
 /// later user turn.
 #[derive(Debug, Clone, Serialize, Type)]
@@ -217,6 +264,82 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
         }
     }
     merge_adjacent_assistant_turns(items)
+}
+
+/// Aggregate per-conversation statistics from the raw events. Computed alongside
+/// (not inside) the render items so the transcript and its summary stay
+/// independent.
+pub fn compute_stats(events: &[ConversationEvent]) -> ConversationStats {
+    let mut stats = ConversationStats::default();
+    let mut tool_counts: HashMap<String, u64> = HashMap::new();
+    let mut models: Vec<String> = Vec::new();
+
+    for ev in events {
+        // Conversation-level metadata: take the first non-empty value seen.
+        if stats.cwd.is_none() {
+            stats.cwd = ev.cwd.clone();
+        }
+        if stats.git_branch.is_none() {
+            stats.git_branch = ev.git_branch.clone();
+        }
+        if stats.version.is_none() {
+            stats.version = ev.version.clone();
+        }
+
+        match ev.event_type.as_str() {
+            "user" => stats.user_turns += 1,
+            "assistant" => stats.assistant_turns += 1,
+            _ => {}
+        }
+
+        let Some(message) = ev.message.as_ref() else {
+            continue;
+        };
+
+        if let Some(model) = &message.model {
+            if model != "<synthetic>" && !models.contains(model) {
+                models.push(model.clone());
+            }
+        }
+        if let Some(u) = &message.usage {
+            stats.tokens.input += u.input_tokens.unwrap_or(0);
+            stats.tokens.output += u.output_tokens.unwrap_or(0);
+            stats.tokens.cache_creation += u.cache_creation_input_tokens.unwrap_or(0);
+            stats.tokens.cache_read += u.cache_read_input_tokens.unwrap_or(0);
+        }
+
+        if let Content::Blocks(blocks) = &message.content {
+            for block in blocks {
+                match block {
+                    ContentBlock::Known(KnownBlock::ToolUse { name, .. }) => {
+                        *tool_counts.entry(name.clone()).or_insert(0) += 1;
+                        stats.total_tool_calls += 1;
+                    }
+                    ContentBlock::Known(KnownBlock::ToolResult { is_error, .. }) if *is_error => {
+                        stats.failed_tool_calls += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    stats.turns = stats.user_turns + stats.assistant_turns;
+    stats.models = models;
+    stats.tool_calls = {
+        let mut v: Vec<NamedCount> = tool_counts
+            .into_iter()
+            .map(|(name, count)| NamedCount { name, count })
+            .collect();
+        // Descending by count, then name for stable ordering.
+        v.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
+        v
+    };
+    let cache_denom = stats.tokens.cache_read + stats.tokens.cache_creation + stats.tokens.input;
+    if cache_denom > 0 {
+        stats.cache_hit_rate = Some(stats.tokens.cache_read as f64 / cache_denom as f64);
+    }
+    stats
 }
 
 /// Tags that mark a "user" turn as a system-injected notice rather than a
@@ -709,6 +832,50 @@ mod tests {
         );
         // Default view shows only the visible system event.
         assert_eq!(items.iter().filter(|i| !i.hidden).count(), 1);
+    }
+
+    #[test]
+    fn compute_stats_aggregates_turns_tools_tokens_and_metadata() {
+        let jsonl = concat!(
+            r#"{"type":"user","cwd":"/home/x/proj","gitBranch":"main","version":"1.2.3","message":{"role":"user","content":"hi"}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-7","usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":30,"cache_read_input_tokens":40},"content":[{"type":"text","text":"on it"},{"type":"tool_use","id":"t1","name":"Bash","input":{}},{"type":"tool_use","id":"t2","name":"Bash","input":{}},{"type":"tool_use","id":"t3","name":"Read","input":{}}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"},{"type":"tool_result","tool_use_id":"t2","content":"boom","is_error":true}]}}"#,
+        );
+        let stats = compute_stats(&parse_str(jsonl));
+        assert_eq!(stats.user_turns, 2);
+        assert_eq!(stats.assistant_turns, 1);
+        assert_eq!(stats.turns, 3);
+        assert_eq!(stats.total_tool_calls, 3);
+        assert_eq!(stats.failed_tool_calls, 1);
+        // Bash(2) before Read(1), descending by count.
+        assert_eq!(stats.tool_calls[0].name, "Bash");
+        assert_eq!(stats.tool_calls[0].count, 2);
+        assert_eq!(stats.tool_calls[1].name, "Read");
+        assert_eq!(stats.tokens.input, 10);
+        assert_eq!(stats.tokens.output, 20);
+        assert_eq!(stats.tokens.cache_creation, 30);
+        assert_eq!(stats.tokens.cache_read, 40);
+        // cache_read / (read + creation + input) = 40 / 80 = 0.5
+        assert_eq!(stats.cache_hit_rate, Some(0.5));
+        assert_eq!(stats.models, vec!["claude-opus-4-7".to_string()]);
+        assert_eq!(stats.cwd.as_deref(), Some("/home/x/proj"));
+        assert_eq!(stats.git_branch.as_deref(), Some("main"));
+        assert_eq!(stats.version.as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn compute_stats_excludes_synthetic_model_and_handles_no_usage() {
+        let jsonl = concat!(
+            r#"{"type":"assistant","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"x"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"y"}]}}"#,
+        );
+        let stats = compute_stats(&parse_str(jsonl));
+        assert_eq!(stats.models, vec!["claude-opus-4-7".to_string()]);
+        assert_eq!(stats.cache_hit_rate, None, "no token input => no rate");
+        assert_eq!(stats.total_tool_calls, 0);
     }
 
     #[test]
