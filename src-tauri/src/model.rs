@@ -39,7 +39,7 @@ pub struct ConversationEvent {
     #[serde(default)]
     pub pr_repository: Option<String>,
     #[serde(default)]
-    pub pr_number: Option<i64>,
+    pub pr_number: Option<i32>,
     #[serde(default)]
     pub tool_use_result: Option<serde_json::Value>,
     /// Set by the parser when the raw line could not be decoded as JSON.
