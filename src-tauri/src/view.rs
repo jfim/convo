@@ -166,7 +166,8 @@ fn hidden(node: RenderNode) -> RenderItem {
 ///   later user turn (by `tool_use_id`).
 /// - Drops user turns that carry only tool results (their content surfaces
 ///   inside the joined tool calls).
-/// - Marks `queue-operation` / `last-prompt` / `ai-title` events, attachments,
+/// - Marks `queue-operation` / `last-prompt` / `ai-title` / `mode` /
+///   `permission-mode` / `file-history-snapshot` events, attachments,
 ///   `stop_hook_summary` system events, and "No response requested." filler
 ///   turns as hidden (shown only when "Show hidden" is on).
 /// - Drops empty thinking blocks, empty assistant turns, and blank prompts.
@@ -187,7 +188,8 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
         }
 
         match ev.event_type.as_str() {
-            "queue-operation" | "last-prompt" | "ai-title" => {
+            "queue-operation" | "last-prompt" | "ai-title" | "mode" | "permission-mode"
+            | "file-history-snapshot" => {
                 items.push(hidden(RenderNode::Unknown {
                     uuid: ev.uuid.clone(),
                     label: format!("Event: {}", ev.event_type),
