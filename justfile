@@ -1,11 +1,12 @@
+# Ensure rustup's cargo is on PATH for every recipe (it lives in ~/.cargo/bin,
+# which a non-login `just` shell would otherwise miss).
+export PATH := env_var('HOME') + "/.cargo/bin:" + env_var('PATH')
+
 default:
     @just --list
 
 dev:
     npm run tauri dev
-
-build:
-    npm run tauri build
 
 fmt:
     cargo fmt --manifest-path src-tauri/Cargo.toml
@@ -18,12 +19,13 @@ test:
 
 check: fmt lint test
 
-# Build a release bundle, install the binary to ~/.local/bin, and register the
-# convo:// scheme so deep links open the installed (non-dev) app. No sudo needed.
+# Build the release app (no installers) and install it locally: copy the binary
+# to ~/.local/bin and register the convo:// scheme so deep links open the
+# installed (non-dev) app. No sudo needed.
 install:
     #!/usr/bin/env bash
     set -euo pipefail
-    npm run tauri build
+    npm run tauri build -- --no-bundle
     install -Dm755 src-tauri/target/release/convo "$HOME/.local/bin/convo"
     apps="$HOME/.local/share/applications"
     mkdir -p "$apps"
@@ -39,3 +41,8 @@ install:
     xdg-mime default convo.desktop x-scheme-handler/convo
     echo "Installed convo to ~/.local/bin/convo and registered convo:// scheme."
     echo "Test: xdg-open \"convo://claude-code/<encoded-project>/<uuid>\""
+
+# Build full distributable bundles (.deb, .rpm, .AppImage) under
+# src-tauri/target/release/bundle/.
+package:
+    npm run tauri build
