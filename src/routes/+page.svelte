@@ -46,10 +46,13 @@
 <title>convo export</title>
 <style>
 ${css}
+.convo-export-footer { max-width: 56rem; margin: 2rem auto; padding: 1rem; text-align: center; font-size: 0.8rem; color: #586e75; }
+.convo-export-footer a { color: #839496; }
 </style>
 </head>
 <body>
 ${conv.outerHTML}
+<footer class="convo-export-footer">Exported by <a href="https://github.com/jfim/convo">convo</a></footer>
 </body>
 </html>`;
     exporting = true;
