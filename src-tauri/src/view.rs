@@ -166,7 +166,7 @@ fn hidden(node: RenderNode) -> RenderItem {
 ///   later user turn (by `tool_use_id`).
 /// - Drops user turns that carry only tool results (their content surfaces
 ///   inside the joined tool calls).
-/// - Marks `queue-operation` / `last-prompt` events, attachments,
+/// - Marks `queue-operation` / `last-prompt` / `ai-title` events, attachments,
 ///   `stop_hook_summary` system events, and "No response requested." filler
 ///   turns as hidden (shown only when "Show hidden" is on).
 /// - Drops empty thinking blocks, empty assistant turns, and blank prompts.
@@ -187,11 +187,13 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
         }
 
         match ev.event_type.as_str() {
-            "queue-operation" | "last-prompt" => items.push(hidden(RenderNode::Unknown {
-                uuid: ev.uuid.clone(),
-                label: format!("Event: {}", ev.event_type),
-                raw: serde_json::to_value(ev).unwrap_or(Value::Null),
-            })),
+            "queue-operation" | "last-prompt" | "ai-title" => {
+                items.push(hidden(RenderNode::Unknown {
+                    uuid: ev.uuid.clone(),
+                    label: format!("Event: {}", ev.event_type),
+                    raw: serde_json::to_value(ev).unwrap_or(Value::Null),
+                }))
+            }
             "user" => {
                 // None => tool-result-only turn (consumed by joined tool calls).
                 let Some(text) = ev.message.as_ref().and_then(user_prompt_text) else {
@@ -653,26 +655,26 @@ mod tests {
     }
 
     #[test]
-    fn queue_operation_and_last_prompt_are_hidden() {
+    fn queue_operation_last_prompt_and_ai_title_are_hidden() {
         let jsonl = concat!(
             r#"{"type":"queue-operation","operation":"enqueue","content":"queued"}"#,
             "\n",
             r#"{"type":"last-prompt","lastPrompt":"x"}"#,
             "\n",
+            r#"{"type":"ai-title","aiTitle":"Some generated title"}"#,
+            "\n",
             r#"{"type":"user","message":{"role":"user","content":"real"}}"#,
         );
         let items = build_from(jsonl);
-        // All three are emitted; the two ops are hidden, the prompt is shown.
-        assert_eq!(items.len(), 3);
-        assert!(
-            items[0].hidden && matches!(items[0].node, RenderNode::Unknown { .. }),
-            "queue-operation should be a hidden Unknown"
-        );
-        assert!(
-            items[1].hidden && matches!(items[1].node, RenderNode::Unknown { .. }),
-            "last-prompt should be a hidden Unknown"
-        );
-        assert!(!items[2].hidden && matches!(items[2].node, RenderNode::UserPrompt { .. }));
+        // All four are emitted; the three metadata ops are hidden, prompt shown.
+        assert_eq!(items.len(), 4);
+        for (i, label) in [(0, "queue-operation"), (1, "last-prompt"), (2, "ai-title")] {
+            assert!(
+                items[i].hidden && matches!(items[i].node, RenderNode::Unknown { .. }),
+                "{label} should be a hidden Unknown"
+            );
+        }
+        assert!(!items[3].hidden && matches!(items[3].node, RenderNode::UserPrompt { .. }));
         // Default view shows only the prompt.
         assert_eq!(items.iter().filter(|i| !i.hidden).count(), 1);
     }
