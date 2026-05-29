@@ -43,13 +43,14 @@ pub struct ConversationEvent {
     #[serde(default)]
     pub tool_use_result: Option<serde_json::Value>,
     /// Set by the parser when the raw line could not be decoded as JSON.
-    #[serde(skip)]
+    /// Never present in source `.jsonl`; synthesized by the parser only.
+    #[serde(default)]
     pub parse_error: Option<ParseError>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ParseError {
-    pub line_number: usize,
+    pub line_number: u32,
     pub raw: String,
     pub message: String,
 }

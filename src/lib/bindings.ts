@@ -45,7 +45,12 @@ export type ContentBlock = KnownBlock | JsonValue
  * decode. `parse_error` is synthesized by the parser for lines that fail to
  * decode as JSON; it is never present in the source.
  */
-export type ConversationEvent = { type?: string; uuid?: string | null; parentUuid?: string | null; timestamp?: string | null; sessionId?: string | null; cwd?: string | null; gitBranch?: string | null; message?: Message | null; subtype?: string | null; level?: string | null; content?: JsonValue | null; attachment?: JsonValue | null; prUrl?: string | null; prRepository?: string | null; prNumber?: number | null; toolUseResult?: JsonValue | null }
+export type ConversationEvent = { type?: string; uuid?: string | null; parentUuid?: string | null; timestamp?: string | null; sessionId?: string | null; cwd?: string | null; gitBranch?: string | null; message?: Message | null; subtype?: string | null; level?: string | null; content?: JsonValue | null; attachment?: JsonValue | null; prUrl?: string | null; prRepository?: string | null; prNumber?: number | null; toolUseResult?: JsonValue | null; 
+/**
+ * Set by the parser when the raw line could not be decoded as JSON.
+ * Never present in source `.jsonl`; synthesized by the parser only.
+ */
+parseError?: ParseError | null }
 /**
  * Error returned across the Tauri boundary. Serializes to a tagged object the
  * frontend can switch on.
@@ -59,6 +64,7 @@ export type KnownBlock = { type: "text"; text: string } | { type: "thinking"; th
  */
 export type LoadedConversation = { events: ConversationEvent[]; anchor: string | null }
 export type Message = { role?: string | null; content: Content }
+export type ParseError = { line_number: number; raw: string; message: string }
 export type ToolResultContent = string | JsonValue[]
 
 /** tauri-specta globals **/

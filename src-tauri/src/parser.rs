@@ -30,7 +30,7 @@ pub fn parse_str(contents: &str) -> Vec<ConversationEvent> {
                 event_type: "parse-error".to_string(),
                 uuid: Some(format!("parse-error-{}", idx + 1)),
                 parse_error: Some(ParseError {
-                    line_number: idx + 1,
+                    line_number: (idx + 1) as u32,
                     raw: line.to_string(),
                     message: e.to_string(),
                 }),
