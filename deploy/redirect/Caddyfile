@@ -1,0 +1,24 @@
+# convo:// redirect service (Caddy) -- automatic HTTPS, minimal config.
+# Equivalent to nginx.conf; pick whichever you already run.
+# Validate before reload:  caddy validate --config Caddyfile
+#
+# Caddy v2 does not write access logs unless a `log` directive is present, but
+# we discard explicitly to be unambiguous: the path carries visitors' slugs and
+# session ids, which are not ours to record.
+
+convo.example.com {                            # <-- your hostname (Caddy gets the cert automatically)
+
+    log {
+        output discard
+    }
+
+    header Referrer-Policy "no-referrer"
+
+    # Match exactly /claude-code/<slug>/<uuid>; redirect into the convo:// scheme.
+    # {path} begins with '/', so "convo:/" + {path} -> "convo://claude-code/...".
+    @link path_regexp ^/claude-code/[A-Za-z0-9_-]+/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+    redir @link convo:/{path} 302
+
+    # Anything else is not a valid convo link.
+    respond 404
+}
