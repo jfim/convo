@@ -43,6 +43,7 @@ pub fn parse_str(contents: &str) -> Vec<ConversationEvent> {
                     message: None,
                     subtype: None,
                     level: None,
+                    is_meta: None,
                     content: None,
                     attachment: None,
                     pr_url: None,

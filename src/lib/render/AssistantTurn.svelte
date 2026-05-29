@@ -7,9 +7,11 @@
 
 <div class="turn assistant">
   <div class="role">Assistant</div>
-  {#each blocks as block}
-    <AssistantBlockView {block} />
-  {/each}
+  <div class="blocks">
+    {#each blocks as block}
+      <AssistantBlockView {block} />
+    {/each}
+  </div>
 </div>
 
 <style>
@@ -29,5 +31,11 @@
     letter-spacing: 0.05em;
     opacity: 0.6;
     margin-bottom: 0.4rem;
+  }
+  /* Breathing room between stacked blocks / collapsed tool calls. */
+  .blocks {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
   }
 </style>

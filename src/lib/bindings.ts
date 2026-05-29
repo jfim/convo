@@ -76,9 +76,10 @@ export type RenderItem =
 { kind: "userPrompt"; uuid: string | null; text: string } | 
 /**
  * A system-injected "user" turn (e.g. `<task-notification>`, slash-command
- * invocations) — not something the human typed. Rendered distinctly.
+ * invocations, continuation prompts) — not something the human typed.
+ * Rendered collapsed, showing `summary` when available.
  */
-{ kind: "notice"; uuid: string | null; text: string } | 
+{ kind: "notice"; uuid: string | null; text: string; summary: string | null } | 
 /**
  * An assistant turn with its inline blocks (text, thinking, tool calls).
  */

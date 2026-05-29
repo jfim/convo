@@ -30,6 +30,10 @@ pub struct ConversationEvent {
     pub subtype: Option<String>,
     #[serde(default)]
     pub level: Option<String>,
+    /// Marks system-injected turns (e.g. continuation prompts, injected
+    /// instructions) that the human did not type.
+    #[serde(default)]
+    pub is_meta: Option<bool>,
     #[serde(default)]
     pub content: Option<serde_json::Value>,
     #[serde(default)]

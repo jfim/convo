@@ -49,8 +49,13 @@ pub enum RenderItem {
     /// A genuine human prompt (string content, or array content containing text).
     UserPrompt { uuid: Option<String>, text: String },
     /// A system-injected "user" turn (e.g. `<task-notification>`, slash-command
-    /// invocations) — not something the human typed. Rendered distinctly.
-    Notice { uuid: Option<String>, text: String },
+    /// invocations, continuation prompts) — not something the human typed.
+    /// Rendered collapsed, showing `summary` when available.
+    Notice {
+        uuid: Option<String>,
+        text: String,
+        summary: Option<String>,
+    },
     /// An assistant turn with its inline blocks (text, thinking, tool calls).
     AssistantTurn {
         uuid: Option<String>,
@@ -119,8 +124,15 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
                     continue; // empty prompt — don't render
                 }
                 let uuid = ev.uuid.clone();
-                if is_notice(&text) {
-                    items.push(RenderItem::Notice { uuid, text });
+                // isMeta marks system-injected turns; tag-wrapped turns are
+                // notifications. Either way it's not a human-typed prompt.
+                if ev.is_meta == Some(true) || is_notice(&text) {
+                    let summary = notice_summary(&text);
+                    items.push(RenderItem::Notice {
+                        uuid,
+                        text,
+                        summary,
+                    });
                 } else {
                     items.push(RenderItem::UserPrompt { uuid, text });
                 }
@@ -131,22 +143,21 @@ pub fn build(events: &[ConversationEvent]) -> Vec<RenderItem> {
                     .as_ref()
                     .map(|m| assistant_blocks(m, &results))
                     .unwrap_or_default();
-                if blocks.is_empty() {
-                    continue; // empty assistant turn — don't render
+                if blocks.is_empty() || is_no_response(&blocks) {
+                    continue; // empty / "No response requested." filler — don't render
                 }
                 items.push(RenderItem::AssistantTurn {
                     uuid: ev.uuid.clone(),
                     blocks,
                 });
             }
+            // stop_hook_summary system events and attachments are noise: hidden.
+            "system" if ev.subtype.as_deref() == Some("stop_hook_summary") => continue,
+            "attachment" => continue,
             "system" => items.push(RenderItem::System {
                 uuid: ev.uuid.clone(),
                 subtype: ev.subtype.clone(),
                 content: ev.content.clone(),
-            }),
-            "attachment" => items.push(RenderItem::Attachment {
-                uuid: ev.uuid.clone(),
-                content: ev.attachment.clone(),
             }),
             "pr-link" => items.push(RenderItem::PrLink {
                 uuid: ev.uuid.clone(),
@@ -192,6 +203,66 @@ fn leading_tag(text: &str) -> Option<&str> {
 /// Whether a user turn's text is a system-injected notice.
 fn is_notice(text: &str) -> bool {
     leading_tag(text).is_some_and(|tag| NOTICE_TAGS.contains(&tag))
+}
+
+/// Inner text of the first `<tag>...</tag>` in `text`, trimmed, if non-empty.
+fn extract_tag(text: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = text.find(&open)? + open.len();
+    let len = text[start..].find(&close)?;
+    let inner = text[start..start + len].trim();
+    (!inner.is_empty()).then(|| inner.to_string())
+}
+
+/// A short human-readable summary for a notice, shown on the collapsed line.
+fn notice_summary(text: &str) -> Option<String> {
+    // Prefer explicit summaries from known wrappers.
+    if let Some(s) = extract_tag(text, "summary") {
+        return Some(s);
+    }
+    if let Some(s) = extract_tag(text, "command-name") {
+        return Some(s);
+    }
+    // Fallback: first non-empty line, with any surrounding tags stripped.
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && *l != "<task-notification>")?;
+    let cleaned = strip_outer_tag(line);
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    const MAX: usize = 100;
+    Some(if cleaned.chars().count() > MAX {
+        let truncated: String = cleaned.chars().take(MAX).collect();
+        format!("{truncated}…")
+    } else {
+        cleaned.to_string()
+    })
+}
+
+/// Strip a single surrounding `<tag>...</tag>` (or a leading `<tag>`) from a line.
+fn strip_outer_tag(line: &str) -> &str {
+    let Some(after_open) = line
+        .strip_prefix('<')
+        .and_then(|r| r.find('>').map(|i| &r[i + 1..]))
+    else {
+        return line;
+    };
+    match after_open.rfind("</") {
+        Some(i) => after_open[..i].trim(),
+        None => after_open.trim(),
+    }
+}
+
+/// The Claude Code sentinel emitted when the assistant has nothing to add.
+const NO_RESPONSE: &str = "No response requested.";
+
+/// Whether an assistant turn is just the "No response requested." filler.
+fn is_no_response(blocks: &[AssistantBlock]) -> bool {
+    matches!(blocks, [AssistantBlock::Markdown { text }] if text.trim() == NO_RESPONSE)
 }
 
 /// Merge directly-adjacent assistant turns into a single turn, concatenating
@@ -494,5 +565,65 @@ mod tests {
             matches!(&items[0], RenderItem::UserPrompt { .. }),
             "unknown leading tag should stay a UserPrompt"
         );
+    }
+
+    #[test]
+    fn is_meta_user_turn_becomes_notice_with_summary() {
+        let items = build_from(
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"Continue from where you left off."}]}}"#,
+        );
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            RenderItem::Notice { summary, .. } => {
+                assert_eq!(
+                    summary.as_deref(),
+                    Some("Continue from where you left off.")
+                );
+            }
+            other => panic!("expected Notice, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn task_notification_summary_uses_summary_tag() {
+        let items = build_from(
+            r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<status>killed</status>\n<summary>Background command \"watcher\" was stopped</summary>\n</task-notification>"}}"#,
+        );
+        let RenderItem::Notice { summary, .. } = &items[0] else {
+            panic!("expected Notice");
+        };
+        assert_eq!(
+            summary.as_deref(),
+            Some("Background command \"watcher\" was stopped")
+        );
+    }
+
+    #[test]
+    fn no_response_requested_assistant_turn_is_dropped() {
+        let items = build_from(
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"No response requested."}]}}"#,
+        );
+        assert!(items.is_empty(), "filler assistant turn should be dropped");
+    }
+
+    #[test]
+    fn attachments_and_stop_hook_summaries_are_hidden() {
+        let jsonl = concat!(
+            r#"{"type":"attachment","attachment":{"hookName":"x"}}"#,
+            "\n",
+            r#"{"type":"system","subtype":"stop_hook_summary","content":{}}"#,
+            "\n",
+            r#"{"type":"system","subtype":"api_error","content":{"msg":"boom"}}"#,
+        );
+        let items = build_from(jsonl);
+        assert_eq!(
+            items.len(),
+            1,
+            "only the non-stop_hook system event remains"
+        );
+        assert!(matches!(
+            &items[0],
+            RenderItem::System { subtype, .. } if subtype.as_deref() == Some("api_error")
+        ));
     }
 }

@@ -14,7 +14,7 @@
 {#if item.kind === "userPrompt"}
   <UserPrompt text={item.text} />
 {:else if item.kind === "notice"}
-  <Notice text={item.text} />
+  <Notice text={item.text} summary={item.summary} />
 {:else if item.kind === "assistantTurn"}
   <AssistantTurn blocks={item.blocks} />
 {:else if item.kind === "system"}
