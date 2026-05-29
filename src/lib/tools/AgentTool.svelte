@@ -22,7 +22,8 @@
   });
 </script>
 
-<CodeBlock label="prompt" text={prompt} />
+<div class="label">prompt</div>
+<div class="resp-block"><Markdown source={prompt} /></div>
 
 {#if responseBlocks.length}
   <div class="label">response</div>
