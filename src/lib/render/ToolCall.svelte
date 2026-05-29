@@ -8,24 +8,23 @@
     result,
   }: { name: string; input: unknown; result: ToolResult | null } = $props();
 
-  let open = $state(false);
   let renderer = $derived(rendererFor(name));
   let summary = $derived(renderer.summary(input));
+  let Body = $derived(renderer.component);
 </script>
 
-<div class="tool" class:error={result?.isError}>
-  <button class="summary" onclick={() => (open = !open)} aria-expanded={open}>
-    <span class="chev">{open ? "▾" : "▸"}</span>
+<!-- Native <details> so expand/collapse works with no JS — including in the
+     static HTML export, which is a DOM snapshot with no scripts. -->
+<details class="tool" class:error={result?.isError}>
+  <summary>
+    <span class="chev"></span>
     <span class="name">{name}</span>{#if summary}<span class="desc">: {summary}</span
       >{/if}
-  </button>
-  {#if open}
-    {@const Body = renderer.component}
-    <div class="body">
-      <Body {input} {result} {summary} />
-    </div>
-  {/if}
-</div>
+  </summary>
+  <div class="body">
+    <Body {input} {result} {summary} />
+  </div>
+</details>
 
 <style>
   .tool {
@@ -36,21 +35,28 @@
   .tool.error {
     border-left-color: #dc322f;
   }
-  .summary {
+  summary {
     display: block;
     width: 100%;
     text-align: left;
-    background: none;
-    border: none;
     color: #93a1a1;
     cursor: pointer;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.85rem;
     padding: 0.1rem 0;
+    list-style: none;
   }
-  .chev {
+  /* Hide the default disclosure marker; we draw our own chevron. */
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  .chev::before {
+    content: "▸";
     color: #586e75;
     margin-right: 0.3rem;
+  }
+  details[open] > summary .chev::before {
+    content: "▾";
   }
   .name {
     color: #268bd2;
