@@ -210,6 +210,43 @@ hosts/sources can be added without touching the parser.
   `test`, `check` (fmt + lint + test), `build`.
 - `clippy` is denied-on-warnings in `check` and CI.
 
+## Extensibility / future-proofing
+
+Three future features were evaluated against this design: supporting new
+conversation types (e.g. claude.ai web exports), exporting a conversation to a
+self-contained HTML file, and browsing/searching all conversations via an embedded
+sqlite database with vector search. None requires a hard corner to be avoided.
+Two cheap hygiene rules are adopted now; one larger change is deliberately
+deferred.
+
+### Adopt now (free hygiene that keeps doors open)
+
+- **Event components are purely presentational.** Each event/block component is a
+  pure function of its event-data props: no `invoke`, `window`, or other
+  Tauri/browser calls during render. All data loading lives in the container
+  (`Conversation.svelte`) or a loader. This enables a future self-contained HTML
+  export via Svelte SSR (`render()` from `svelte/server`) that reuses the same
+  components — feed them the same events, get an HTML string, inline CSS and
+  base64 images — with no duplicated rendering logic.
+- **`parser.rs` is headless.** Parsing is a plain `parse(path) -> Result<Vec<
+  ConversationEvent>>` with no dependency on `AppHandle` or window state, so it can
+  run outside the UI flow. This lets a future background indexer reuse the exact
+  same parser to populate a sqlite (FTS + `sqlite-vec`) index for browsing/search,
+  running as a background task that never blocks cold start.
+
+### Deferred (rework when a second source actually exists)
+
+- **New conversation types: v1 is intentionally coupled to Claude Code's
+  representation.** `ConversationEvent` mirrors the Claude Code JSONL shape
+  directly rather than being a source-agnostic normalized model. When a second
+  source (e.g. claude.ai export) is actually added, the model will be reworked to
+  introduce a normalization seam (per-source `parse` producing a canonical event
+  model). This is a deliberate YAGNI decision: it is a single-repo desktop app with
+  no external/remote clients to stay compatible with, so a later refactor that
+  forces coordinated frontend changes is cheap and acceptable — and avoids guessing
+  at a second format's shape before it exists. The `convo://` host segment
+  (`claude-code/…`) is the natural place this distinction would later hang.
+
 ## Open questions / future work
 
 - Live tail: file watcher emitting new events to the keyed list (architecture
